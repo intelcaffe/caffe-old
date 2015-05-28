@@ -292,6 +292,7 @@ class MemoryDataLayer : public BaseDataLayer<Dtype> {
  *
  * TODO(dox): thorough documentation for Forward and proto params.
  */
+
 template <typename Dtype>
 class WindowDataLayer : public BasePrefetchingDataLayer<Dtype> {
  public:
@@ -321,6 +322,44 @@ class WindowDataLayer : public BasePrefetchingDataLayer<Dtype> {
   bool cache_images_;
   vector<std::pair<std::string, Datum > > image_database_cache_;
 };
+
+template <typename Dtype>
+class InMemoryDataLayer : public BasePrefetchingDataLayer<Dtype> {
+ public:
+  explicit InMemoryDataLayer(const LayerParameter& param)
+      : BasePrefetchingDataLayer<Dtype>(param) {}
+  virtual ~InMemoryDataLayer();
+  virtual void DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
+      const vector<Blob<Dtype>*>& top);
+
+  virtual inline const char* type() const { return "InMemoryData"; }
+  virtual inline int ExactNumBottomBlobs() const { return 0; }
+  virtual inline int MinTopBlobs() const { return 1; }
+  virtual inline int MaxTopBlobs() const { return 2; }
+  virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
+      const vector<Blob<Dtype>*>& top);
+  virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
+      const vector<Blob<Dtype>*>& top);
+
+  virtual void Shuffle();
+  virtual void SetCursor(size_t cursor);
+  virtual size_t getCursor() { return current_; }
+  virtual void PrefetchOn()  { prefetchOn_ = true; }
+  virtual void PrefetchOff() { prefetchOn_ = false; };
+
+ protected:
+  virtual void InternalThreadEntry();
+  shared_ptr<db::DB> db_;
+  shared_ptr<db::Cursor> cursor_;
+
+  std::vector<std::string> memDb_; // copy of DB in host DRAM
+  size_t num_entries_;
+  size_t current_;
+  bool prefetchOn_;
+  bool shuffle_ ;
+
+};
+
 
 }  // namespace caffe
 

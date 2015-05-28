@@ -32,6 +32,9 @@ void LMDB::Open(const string& source, Mode mode) {
   }
   MDB_CHECK(mdb_env_open(mdb_env_, source.c_str(), flags, 0664));
   LOG(INFO) << "Opened lmdb " << source;
+  MDB_stat mdb_stat;
+  MDB_CHECK((mdb_env_stat(mdb_env_, &mdb_stat)));
+  LOG(INFO) << "Number of entries in database " << mdb_stat.ms_entries;
 }
 
 LMDBCursor* LMDB::NewCursor() {
