@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include<iomanip>
 
 #include "caffe/net.hpp"
 #include "caffe/proto/caffe.pb.h"
@@ -11,7 +12,356 @@
 #include "caffe/util/math_functions.hpp"
 #include "caffe/util/upgrade_proto.hpp"
 
+
 namespace caffe {
+
+// ------------------------------------------------------------------
+// quadratic approximation y[i] ~ a*x[i]^2 + b*x[i] + c
+// Rsquare measures how good is approximation
+
+template <typename Dtype>
+void Solver<Dtype>::QuadraticEstimate(vector<Dtype> & x, vector<Dtype> & y,
+		Dtype & a, Dtype & b, Dtype & c , Dtype & Rsquare) {
+  if ( (x.size()!=y.size()) or (x.size()==0) )	{
+	LOG(ERROR) << " ERROR: QuadraticEstimate: input size = 0" ;
+	return ;
+  }
+  // auxiliary  calculations
+  Dtype x_4 = .0;
+  Dtype x_3 = .0;
+  Dtype x_2 = .0;
+  Dtype x_1 = .0;
+  Dtype x_0 = x.size();
+  Dtype y_1 = .0;
+  Dtype y_x_1 = .0;
+  Dtype y_x_2 = .0;
+  for (int i = 0; i < x.size(); ++i) {
+    x_4 += x[i] * x[i] * x[i] * x[i];
+    x_3 += x[i] * x[i] * x[i];
+    x_2 += x[i] * x[i];
+    x_1 += x[i];
+    y_1 += y[i];
+    y_x_1 += y[i] * x[i];
+    y_x_2 += y[i] * x[i] * x[i];
+  }
+
+  Dtype det = x_4*(x_2*x_0 - x_1*x_1) - x_3*(x_3*x_0 - x_1*x_2) + x_2*(x_3*x_1 - x_2*x_2);
+  Dtype d0 = y_x_2*(x_2*x_0 - x_1*x_1) - y_x_1*(x_3*x_0 - x_1*x_2) + y_1*(x_3*x_1 - x_2*x_2);
+  Dtype d1 = x_4*(y_x_1*x_0 - y_1*x_1) - x_3 * (y_x_2*x_0 - y_1*x_2) + x_2*(y_x_2*x_1 - y_x_1*x_2);
+  Dtype d2 = x_4*(x_2*y_1 - x_1*y_x_1) - x_3 * (x_3*y_1 - x_1*y_x_2) + x_2*(x_3*y_x_1 - x_2*y_x_2);
+  a = b = c  =.0;
+  if (det != 0.0) {
+    a = d0/det;
+    b = d1/det;
+    c = d2/det;
+  }
+  else
+	 LOG(INFO) << "LINE SEARCH ERROR: det = 0";
+
+  // R^2 calculation
+  Dtype mean = 0.0;
+  for (int i = 0; i < x.size(); ++i) {
+	mean += y[i];
+  }
+  mean = mean/x.size();
+  Dtype error = 0.0;
+  Dtype distance_from_mean = 0.0;
+  for (int i = 0; i < x.size(); ++i) {
+	Dtype tmp = y[i] - a * x[i] * x[i] - b * x[i] - c ;
+	Dtype tmp2 = mean - y[i];
+    error += tmp*tmp;
+	distance_from_mean += tmp2*tmp2;
+  }
+  Rsquare = 0.0;
+  if (distance_from_mean!=0.)
+   Rsquare = 1.0 - (error/distance_from_mean);
+//   LOG(INFO) << "LINE SEARCH: a = " << a << " b = " << b << " c = " << c
+//            << "Rsquare = " << Rsquare;
+}
+
+//----------------------------------------------------------------------------
+template <typename Dtype>
+void Solver<Dtype>::InitLineSearch() {
+  Dtype alpha_min_ = param_.ls_param().alpha_min();
+  Dtype alpha_max_ = param_.ls_param().alpha_max();
+  Dtype alpha_step_ = param_.ls_param().alpha_step();
+
+  CHECK((alpha_min_ <  alpha_max_) && (alpha_step_ >0.))
+	 << "Wrong line search alpha parameters";
+  ls_alphas_.clear();
+  ls_loss_.clear();
+  for (Dtype alpha = alpha_min_; alpha <= alpha_max_ + 0.0001 ; alpha +=alpha_step_) {
+	ls_alphas_.push_back(alpha);
+	ls_loss_.push_back(0.);
+  }
+  //prepare ls buffers
+  const vector<shared_ptr<Blob<Dtype> > >& net_params = net_->params(); //this->net_->params();
+  ls_history_.clear();
+  ls_temp_.clear();
+  for (int i = 0; i < net_params.size(); ++i) {
+    const vector<int>& shape = net_params[i]->shape();
+    ls_history_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(shape)));
+    ls_temp_.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(shape)));
+  }
+  SaveWeights(ls_history_);
+  ls_lr_ = param_.base_lr() ;
+  LOG(INFO) << "LINE SEARCH initialized at "<< iter_ ;
+}
+
+//=============================================================================
+template <typename Dtype>
+void Solver<Dtype>::ClearLineSearch() {
+  ls_alphas_.clear();
+  ls_loss_.clear();
+  for (int i=0; i < ls_history_.size(); i++) {
+	  ls_history_[i].reset();
+	  ls_temp_[i].reset();
+  }
+  ls_history_.clear();
+  ls_temp_.clear();
+}
+
+//-------------------------------------------------------------------
+//  1. combine weights0 and weights1
+//  2. load combination into solver
+//  3. test loss functions
+//-------------------------------------------------------------------
+
+template <typename Dtype>
+void Solver<Dtype>::TestLineInterval(
+		const vector<shared_ptr<Blob<Dtype> > >& weights0,
+		const vector<shared_ptr<Blob<Dtype> > >& weights1)  {
+  //  SaveWeights(ls_temp_);
+  LOG(INFO) << "Starting linear combination ";
+  const vector<shared_ptr<Blob<Dtype> > >& net_params = net_->params();
+  CHECK(weights0.size() == weights1.size() &&
+		net_params.size() == weights0.size() ) << "Weights size mismatch";
+  ls_loss_.clear();
+  int n;
+  int numAlphas=ls_alphas_.size();
+  for (int it=0; it < numAlphas; it ++) {
+	Dtype alpha = ls_alphas_[it];
+    // --- combine weights ----------------------
+	for (int i = 0; i < net_params.size(); ++i) {
+	  n = net_params[i]->count();
+	  CHECK((weights0[i]->count() == n) && (weights1[i]->count() == n) ) << "Layer mismatch";
+      switch (Caffe::mode()) {
+        case Caffe::CPU:
+         caffe::caffe_copy(n, weights0[i]->cpu_data(), net_params[i]->mutable_cpu_data());
+          caffe::caffe_cpu_axpby(n, alpha, weights1[i]->cpu_data(),
+        		           Dtype (1.0 - alpha), net_params[i]->mutable_cpu_data());
+          break;
+        case Caffe::GPU:
+          caffe::caffe_copy(n,weights0[i]->gpu_data(), net_params[i]->mutable_gpu_data());
+          caffe::caffe_gpu_axpby(n, alpha, weights1[i]->gpu_data(),
+        		  Dtype (1.0 - alpha), net_params[i]->mutable_gpu_data());
+          break;
+      }
+    }
+	// ----- compute loss --------------------------------------------
+	Dtype loss = LS_Loss( param_.ls_param().ls_net_id());
+	LOG(INFO) << "Linear combination: iteration " << iter_
+			  << " alpha = " << std::fixed << std::setprecision(2)<< alpha
+			  << " loss = " << std::fixed << std::setprecision(8) << loss;
+	ls_loss_.push_back(loss);
+  }
+
+//  LoadWeights(ls_temp_);
+}
+
+// --------------------------------------------------------
+
+template <typename Dtype>
+void Solver<Dtype>::LineSearch() {
+  const vector<shared_ptr<Blob<Dtype> > >& net_params=net_->params();
+  SaveWeights(ls_temp_);
+ // Dtype diffW = DiffWeights(ls_history_,ls_temp_);
+
+  //compute LS_Loss on interval between previous heckPoint (ls_history) and current weights;
+  TestLineInterval(ls_history_,ls_temp_);
+
+  Dtype a, b, c, Rsquare;
+  QuadraticEstimate(ls_alphas_,ls_loss_, a, b, c, Rsquare);
+
+  Dtype alphaOpt  = 1.0;
+  if ( (Rsquare > LS_RSQUARE_THRESHOLD) && (a > LS_A_THRESHOLD) )  {
+      alphaOpt =  (-b/(2.*a));
+      // if ( alphaOpt > param_.ls_param().alpha_max() )
+      // 	alphaOpt = param_.ls_param().alpha_max();
+      // if ( alphaOpt < param_.ls_param().alpha_min() )
+      // 	alphaOpt = param_.ls_param().alpha_min();
+  }
+
+  //  combine optimal weight in ls_history ------
+  if ( param_.ls_param().merge()) {
+    for (int i = 0; i < net_params.size(); ++i) {
+      int n = net_params[i]->count();
+      switch (Caffe::mode()) {
+      case Caffe::CPU:
+        caffe::caffe_cpu_axpby(n, alphaOpt, ls_temp_[i]->cpu_data(),
+      		      Dtype (1.0 - alphaOpt), ls_history_[i]->mutable_cpu_data());
+        break;
+      case Caffe::GPU:
+        caffe::caffe_gpu_axpby(n, alphaOpt, ls_temp_[i]->gpu_data(),
+    		      Dtype(1.0 - alphaOpt), ls_history_[i]->mutable_gpu_data());
+        break;
+      }
+    }
+    LoadWeights(ls_history_);
+  }
+  else {
+	//restore solver weights before LS
+	LoadWeights(ls_temp_);
+	// and keep them in ls_history
+	SaveWeights(ls_history_);
+  }
+
+
+  //-----------------------------------------------------
+  Dtype ls_loss_after = LS_Loss( param_.ls_param().ls_net_id() );
+  Dtype test_loss_after = LS_Loss(0);
+
+  //------ update learning rate --------------------------
+  float old_lr = param_.base_lr() ;
+  float old_moment=param_.momentum();
+  float new_lr  =  old_lr;
+  float new_moment = old_moment;
+  if ( param_.ls_param().alrc()) {
+    if ( (Rsquare > LS_RSQUARE_THRESHOLD) && (a > LS_A_THRESHOLD) ){
+      if ( (alphaOpt < 0.6) ) { // this also cover negative alpha
+	    new_lr = old_lr * 0.66;
+	  }  else if (alphaOpt > 3.0) {
+	    new_lr = old_lr * 1.5;
+	  }
+	  // new_lr = old_lr * alphaOpt;
+	  //param_.set_base_lr( new_lr);
+    } else if (Rsquare < LS_RSQUARE_THRESHOLD) {
+	    new_lr = old_lr * 0.66;
+    } else if (a < LS_A_THRESHOLD) {
+	    //  new_lr = old_lr * 1.5.;
+    }
+    new_lr = std::max((float)LS_LR_MIN, new_lr);
+    new_lr = std::min((float)LS_LR_MAX, new_lr);
+    param_.set_base_lr(new_lr);
+    //------ update moment --------------------------
+    if ( param_.ls_param().amc()) {
+      if (new_lr < 1.) {
+       new_moment = (1-sqrt(new_lr))*(1-sqrt(new_lr));
+      }
+      param_.set_momentum(new_moment);
+    }
+  }
+
+  LOG(INFO) << "LINE SEARCH: iteration " << iter_
+		    << " a = " << std::fixed << std::setprecision(8) << a
+		    << " b = " << std::fixed << std::setprecision(8) << b
+		    << " c = " << std::fixed << std::setprecision(8) << c
+		    << " Rsquare = " << std::fixed << std::setprecision(8) << Rsquare
+		    << " alpha_opt = " << std::fixed << std::setprecision(8) << alphaOpt
+		    << " test loss after = " << std::fixed << std::setprecision(8) << test_loss_after
+		    << " ls loss after = "  << std::fixed << std::setprecision(8) << ls_loss_after
+		    << " new_lr = " << std::fixed << std::setprecision(8) << new_lr
+		    << " new_moment = " << std::fixed << std::setprecision(8) << new_moment;
+}
+
+//---------------------------------------------------------
+
+template <typename Dtype>
+void Solver<Dtype>::SaveWeights(vector<shared_ptr<Blob<Dtype> > > & weights) {
+  const vector<shared_ptr<Blob<Dtype> > >& net_params = net_->params();
+  //   netWeights.clear();
+  //  for (int i = 0; i < net_params.size(); ++i) {
+  //    const vector<int>& shape = net_params[i]->shape();
+  //    netWeights.push_back(shared_ptr<Blob<Dtype> >(new Blob<Dtype>(shape)));
+  //  }
+
+  if ( net_params.size()!= weights.size()) {
+	LOG(ERROR) << "ERROR in Solver::SaveWeigths " ;
+    return;
+  } else {
+  for (int i = 0; i < net_params.size(); ++i) {
+    int n = net_params[i]->count();
+    if (weights[i]->count()!=n){
+      LOG(ERROR) << "ERROR in Solver::SaveWeigths " ;
+      return ;
+    } else {
+    if (Caffe::mode()==Caffe::CPU)
+      caffe::caffe_copy(n, net_params[i]->cpu_data(),
+    		            weights[i]->mutable_cpu_data());
+    else // Caffe::mode()==Caffe::GPU
+      caffe::caffe_copy(n, net_params[i]->gpu_data(),
+    		            weights[i]->mutable_gpu_data());
+    }
+  } // end of for
+ }
+}
+
+
+//---------------------------------------------------------
+
+template <typename Dtype>
+void Solver<Dtype>::LoadWeights(
+		const vector<shared_ptr<Blob<Dtype> > >   & weights) {
+  const vector<shared_ptr<Blob<Dtype> > >& net_params = net_->params();
+  int n;
+  if ( net_params.size()!= weights.size()) {
+    LOG(ERROR) << "ERROR in Solver::SaveWeigths " ;
+	return;
+  } else {
+  for (int i = 0; i < net_params.size(); ++i) {
+    n = net_params[i]->count();
+    if (weights[i]->count()!=n){
+      LOG(ERROR) << "ERROR in Solver::SaveWeigths " ;
+      return ;
+    } else {
+    if (Caffe::mode()==Caffe::CPU)
+      caffe::caffe_copy(n, weights[i]-> cpu_data(),
+	                    net_params[i]-> mutable_cpu_data());
+    else // Caffe::mode()==Caffe::GPU
+      caffe::caffe_copy(n, weights[i]->gpu_data(),
+            	        net_params[i]-> mutable_gpu_data());
+    }
+  } // end of for
+ }
+}
+
+// ----------------------------------------------------------------------------
+
+template <typename Dtype>
+Dtype Solver<Dtype>::DiffWeights(
+		const vector<shared_ptr<Blob<Dtype> > >& weights0,
+		const vector<shared_ptr<Blob<Dtype> > >& weights1)  {
+  Dtype diff =  0.;
+    // --- combine weights ----------------------
+  for (int i = 0; i < weights0.size(); ++i) {
+	int n0 = weights0[i]->count();
+	int n1 = weights1[i]->count();
+	CHECK(weights0[i]->count() == weights1[i]->count()) << "Layer mismatch";
+    for ( int k = 0; k < n0; k++) {
+   	  diff += (weights0[i]->cpu_data()[k] - weights1[i]->cpu_data()[k])*
+    	      (weights0[i]->cpu_data()[k] - weights1[i]->cpu_data()[k]);
+    }
+    /*
+    switch (Caffe::mode()) {
+      case Caffe::CPU:
+        for ( int k=0; k<n; k++) {
+       	  diff += (weights0[i]->cpu_data()[k] - weights1[i]->cpu_data()[k])*
+        	      (weights0[i]->cpu_data()[k] - weights1[i]->cpu_data()[k]);
+        }
+        break;
+      case Caffe::GPU:
+        for ( int k=0; k<n; k++) {
+          diff += (weights0[i]->gpu_data()[k] - weights1[i]->gpu_data()[k])*
+        	      (weights0[i]->gpu_data()[k] - weights1[i]->gpu_data()[k]);
+        }
+        break;
+    }
+    */
+  }
+  return(sqrt(diff));
+}
+
+//======== END OF LINE SEARCH ================================================
 
 template <typename Dtype>
 Solver<Dtype>::Solver(const SolverParameter& param)
@@ -25,7 +375,7 @@ Solver<Dtype>::Solver(const string& param_file)
   SolverParameter param;
   ReadProtoFromTextFileOrDie(param_file, &param);
   Init(param);
-}
+ }
 
 template <typename Dtype>
 void Solver<Dtype>::Init(const SolverParameter& param) {
@@ -42,6 +392,9 @@ void Solver<Dtype>::Init(const SolverParameter& param) {
   LOG(INFO) << "Solver scaffolding done.";
   iter_ = 0;
   current_step_ = 0;
+  //-----------------------------------------------------
+  // if (param_.ls_on())  InitLineSearch();
+
 }
 
 template <typename Dtype>
@@ -186,7 +539,7 @@ void Solver<Dtype>::Step(int iters) {
       losses[idx] = loss;
     }
     if (display) {
-      LOG(INFO) << "Iteration " << iter_ << ", loss = " << smoothed_loss;
+      LOG(INFO) << "Iteration " << iter_ << ", train loss = " << smoothed_loss;
       const vector<Blob<Dtype>*>& result = net_->output_blobs();
       int score_index = 0;
       for (int j = 0; j < result.size(); ++j) {
@@ -209,6 +562,16 @@ void Solver<Dtype>::Step(int iters) {
     }
     ComputeUpdateValue();
     net_->Update();
+
+    if (param_.ls_on()){
+    	if (iter_ == param_.ls_param().ls_start()){
+    		InitLineSearch();
+    	}
+    	else if ( (iter_ > param_.ls_param().ls_start() )
+    			  && (iter_ % param_.ls_param().ls_interval() == 0 ) ) {
+    		LineSearch();
+    	}
+    }
 
     // Increment the internal iter_ counter -- its value should always indicate
     // the number of times the weights have been updated.
@@ -249,7 +612,7 @@ void Solver<Dtype>::Solve(const char* resume_file) {
   if (param_.display() && iter_ % param_.display() == 0) {
     Dtype loss;
     net_->ForwardPrefilled(&loss);
-    LOG(INFO) << "Iteration " << iter_ << ", loss = " << loss;
+    LOG(INFO) << "Iteration " << iter_ << ", train loss = " << loss;
   }
   if (param_.test_interval() && iter_ % param_.test_interval() == 0) {
     TestAll();
@@ -265,6 +628,7 @@ void Solver<Dtype>::TestAll() {
   }
 }
 
+
 template <typename Dtype>
 void Solver<Dtype>::Test(const int test_net_id) {
   LOG(INFO) << "Iteration " << iter_
@@ -275,7 +639,7 @@ void Solver<Dtype>::Test(const int test_net_id) {
   vector<int> test_score_output_id;
   vector<Blob<Dtype>*> bottom_vec;
   const shared_ptr<Net<Dtype> >& test_net = test_nets_[test_net_id];
-  Dtype loss = 0;
+  Dtype loss = 0.;
   for (int i = 0; i < param_.test_iter(test_net_id); ++i) {
     Dtype iter_loss;
     const vector<Blob<Dtype>*>& result =
@@ -316,9 +680,73 @@ void Solver<Dtype>::Test(const int test_net_id) {
       loss_msg_stream << " (* " << loss_weight
                       << " = " << loss_weight * mean_score << " loss)";
     }
-    LOG(INFO) << "    Test net output #" << i << ": " << output_name << " = "
+    LOG(INFO) <<"  Test net #" << test_net_id
+        << " output #" << i << ": " << output_name << " = "
         << mean_score << loss_msg_stream.str();
   }
+}
+
+template <typename Dtype>
+Dtype Solver<Dtype>::LS_Loss(const int test_net_id) {
+  //LOG(INFO) << "LS_loss started" ;
+  CHECK_NOTNULL(test_nets_[test_net_id].get())->
+      ShareTrainedLayersWith(net_.get());
+  vector<Dtype> test_score;
+  vector<int> test_score_output_id;
+  vector<Blob<Dtype>*> bottom_vec;
+  const shared_ptr<Net<Dtype> >& test_net = test_nets_[test_net_id];
+  Dtype loss = 0.;
+  Dtype retLoss =0.;
+  for (int i = 0; i < param_.test_iter(test_net_id); ++i) {
+    Dtype iter_loss;
+    //const vector<Blob<Dtype>*>& result =
+        test_net->Forward(bottom_vec, &iter_loss);
+    if (param_.test_compute_loss()) {
+      loss += iter_loss;
+    }
+/*    if (i == 0) {
+      for (int j = 0; j < result.size(); ++j) {
+        const Dtype* result_vec = result[j]->cpu_data();
+        for (int k = 0; k < result[j]->count(); ++k) {
+          test_score.push_back(result_vec[k]);
+          test_score_output_id.push_back(j);
+        }
+      }
+    } else {
+      int idx = 0;
+      for (int j = 0; j < result.size(); ++j) {
+        const Dtype* result_vec = result[j]->cpu_data();
+        for (int k = 0; k < result[j]->count(); ++k) {
+          test_score[idx++] += result_vec[k];
+        }
+      }
+    }
+    */
+  }
+
+  if (param_.test_compute_loss()) {
+    loss /= param_.test_iter(test_net_id);
+//    LOG(INFO) << "Test loss: " << loss;
+    retLoss = loss;
+  }
+  /*
+  for (int i = 0; i < test_score.size(); ++i) {
+    const int output_blob_index =
+        test_net->output_blob_indices()[test_score_output_id[i]];
+    const string& output_name = test_net->blob_names()[output_blob_index];
+    const Dtype loss_weight = test_net->blob_loss_weights()[output_blob_index];
+    ostringstream loss_msg_stream;
+    const Dtype mean_score = test_score[i] / param_.test_iter(test_net_id);
+    if (loss_weight) {
+      loss_msg_stream << " (* " << loss_weight
+                      << " = " << loss_weight * mean_score << " loss)";
+      retLoss = mean_score;
+    }
+//    LOG(INFO) << "    Test net output #" << i << ": " << output_name << " = "
+//        << mean_score << loss_msg_stream.str();
+  }
+  */
+  return retLoss;
 }
 
 
@@ -360,6 +788,8 @@ void Solver<Dtype>::Restore(const char* state_file) {
   RestoreSolverState(state);
 }
 
+
+//------------------------------------------------------------------------
 
 // Return the current learning rate. The currently implemented learning rate
 // policies are as follows:
@@ -412,6 +842,7 @@ Dtype SGDSolver<Dtype>::GetLearningRate() {
   } else {
     LOG(FATAL) << "Unknown learning rate policy: " << lr_policy;
   }
+
   return rate;
 }
 
@@ -464,7 +895,7 @@ void SGDSolver<Dtype>::ComputeUpdateValue() {
   // get the learning rate
   Dtype rate = GetLearningRate();
   if (this->param_.display() && this->iter_ % this->param_.display() == 0) {
-    LOG(INFO) << "Iteration " << this->iter_ << ", lr = " << rate;
+    LOG(INFO) << "Iteration " << this->iter_ << ", lr = " << std::fixed << std::setprecision(8) << rate;
   }
   ClipGradients();
   Dtype momentum = this->param_.momentum();

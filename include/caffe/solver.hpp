@@ -5,8 +5,14 @@
 #include <vector>
 
 #include "caffe/net.hpp"
+//#include "caffe/line_search.hpp"
 
 namespace caffe {
+
+#define LS_RSQUARE_THRESHOLD 0.95
+#define LS_A_THRESHOLD 0.000001
+#define LS_LR_MIN      0.000001
+#define LS_LR_MAX      0.1
 
 /**
  * @brief An interface for classes that perform optimization on Net%s.
@@ -37,6 +43,13 @@ class Solver {
     return test_nets_;
   }
   int iter() { return iter_; }
+  // -- line search--------------------------------------------------------
+  void InitLineSearch();
+  void ClearLineSearch();
+  void LineSearch();
+  void SaveWeights(vector<shared_ptr<Blob<Dtype> > > & weights);
+  void LoadWeights(const vector<shared_ptr<Blob<Dtype> > > & weights);
+  Dtype LS_Loss(const int test_net_id = 1);
 
  protected:
   // Get the update value for the current iteration.
@@ -59,6 +72,25 @@ class Solver {
   shared_ptr<Net<Dtype> > net_;
   vector<shared_ptr<Net<Dtype> > > test_nets_;
 
+  // ----- line search ------------------------
+  void QuadraticEstimate(vector<Dtype> & x, vector<Dtype> & y,
+		  Dtype & a, Dtype & b, Dtype & c , Dtype & Rsquare);
+  void TestLineInterval(const vector<shared_ptr<Blob<Dtype> > >& weights0,
+        		const vector<shared_ptr<Blob<Dtype> > >& weights1);
+  Dtype DiffWeights(const vector<shared_ptr<Blob<Dtype> > >& weights0,
+  		const vector<shared_ptr<Blob<Dtype> > >& weights1);
+
+  float ls_lr_ ;
+
+  vector<Dtype> ls_alphas_;
+  vector<Dtype> ls_loss_;
+  vector<shared_ptr<Blob<Dtype> > > ls_history_;
+  vector<shared_ptr<Blob<Dtype> > > ls_temp_;
+
+
+
+
+  //-------------------------------------------
   DISABLE_COPY_AND_ASSIGN(Solver);
 };
 

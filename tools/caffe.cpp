@@ -57,7 +57,7 @@ static BrewFunction GetBrewFunction(const caffe::string& name) {
       LOG(ERROR) << "\t" << it->first;
     }
     LOG(FATAL) << "Unknown action: " << name;
-    return NULL;  // not reachable, just to suppress old compiler warnings.
+    return NULL;  // not reachablfloat new_lr = ls_lr_e, just to suppress old compiler warnings.
   }
 }
 

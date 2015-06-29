@@ -13,13 +13,18 @@ base_lr: 0.001
 momentum: 0.9
 weight_decay: 0.004
 # The learning rate policy
-lr_policy: "fixed"
+#lr_policy: "fixed"
+lr_policy: "multistep"
+stepvalue: 10000
+stepvalue: 20000
+gamma: 0.1
 # Display every 100 iterations
 display: 100
 # The maximum number of iterations
-max_iter: 4000
+#max_iter: 4000
+max_iter: 30000
 # snapshot intermediate results
-snapshot: 4000
-snapshot_prefix: "examples/cifar10/cifar10_quick"
+snapshot: 30000
+snapshot_prefix: "examples/cifar10/snapshots/cifar10_quick"
 # solver mode: CPU or GPU
 solver_mode: GPU

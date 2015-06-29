@@ -192,6 +192,24 @@ message SolverParameter {
 
   // If false, don't save a snapshot after training finishes.
   optional bool snapshot_after_train = 28 [default = true];
+  
+  // ---- line search ---------------------------------
+  optional bool ls_on = 36 [default = false];
+  optional LineSearchParameter ls_param = 37;
+ 
+}
+
+// Message that stores parameters used by BNLayer
+message LineSearchParameter {
+  optional int32 ls_net_id = 1 [default = 1];
+  optional float alpha_min = 2 [default = 0.0];
+  optional float alpha_max = 3 [default = 1.0];
+  optional float alpha_step = 4 [default = 0.5];
+  optional int32 ls_start = 5 [default = 500];
+  optional int32 ls_interval = 6 [default = 500];
+  optional bool  alrc = 7 [default = true];
+  optional bool  amc = 8  [default = true];
+  optional bool  merge = 9 [default = true];
 }
 
 // A message that stores the solver snapshots

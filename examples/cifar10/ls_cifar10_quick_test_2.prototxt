@@ -31,7 +31,7 @@ layer {
     mean_file: "examples/cifar10/mean.binaryproto"
   }
   data_param {
-    source: "examples/cifar10/cifar10_test_lmdb"
+    source: "examples/cifar10/cifar10_test_lmdb_1000"
     batch_size: 100
     backend: LMDB
   }
@@ -183,12 +183,6 @@ layer {
       type: "constant"
     }
   }
-}
-layer {
-  name: "relu4"
-  type: "ReLU"
-  bottom: "ip1"
-  top: "ip1"
 }
 layer {
   name: "ip2"
