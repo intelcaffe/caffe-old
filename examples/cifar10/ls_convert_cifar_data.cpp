@@ -41,7 +41,7 @@ void read_image(std::ifstream* file, int* label, char* buffer) {
 void convert_dataset(const string& input_folder, const string& output_folder,
     const string& db_type , const string& num_samples) {
   scoped_ptr<db::DB> train_db(db::GetDB(db_type));
-  train_db->Open(output_folder + "/cifar10_train_" + db_type +"_"+ num_samples, db::NEW);
+  train_db->Open(output_folder + "/cifar10_test_" + db_type +"_"+ num_samples, db::NEW);
   scoped_ptr<db::Transaction> txn(train_db->NewTransaction());
   // Data buffer
   int label;

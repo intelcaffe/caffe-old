@@ -4,7 +4,7 @@
 EXAMPLE=examples/cifar10
 DATA=data/cifar10
 DBTYPE=lmdb
-DBLENGTH=5000
+DBLENGTH=1000
 
 echo "Creating $DBTYPE..."
 

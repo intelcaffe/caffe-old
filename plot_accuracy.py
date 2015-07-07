@@ -70,7 +70,9 @@ def main():
     print filename + ": Final accuracy is: " + accuracy[len(accuracy)-1][1]
   plt.title('Accuracy')
   plt.xlabel('Iteration')
+  plt.xlim(0,30000)
   plt.ylabel('Accuracy')
+  plt.ylim(0,1)
   plt.legend(legendnames,loc='lower right')
   plt.show() 
   

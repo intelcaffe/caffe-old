@@ -12,6 +12,58 @@ import math
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
+import scipy as sp
+
+def smooth(x,window_len=5,window='hanning'):
+    """smooth the data using a window with requested size.
+    
+    This method is based on the convolution of a scaled window with the signal.
+    The signal is prepared by introducing reflected copies of the signal 
+    (with the window size) in both ends so that transient parts are minimized
+    in the begining and end part of the output signal.
+    
+    input:
+        x: the input signal 
+        window_len: the dimension of the smoothing window; should be an odd integer
+        window: the type of window from 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'
+            flat window will produce a moving average smoothing.
+
+    output:
+        the smoothed signal
+        
+    example:
+
+    t=linspace(-2,2,0.1)
+    x=sin(t)+randn(len(t))*0.1
+    y=smooth(x)
+    
+    see also: 
+    
+    numpy.hanning, numpy.hamming, numpy.bartlett, numpy.blackman, numpy.convolve
+    scipy.signal.lfilter
+ 
+    TODO: the window parameter could be the window itself if an array instead of a string
+    NOTE: length(output) != length(input), to correct this: return y[(window_len/2-1):-(window_len/2)] instead of just y.
+    """
+
+    
+    if x.size < window_len:
+        raise ValueError, "Input vector needs to be bigger than window size."
+    if window_len<3:
+        return x
+    if not window in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
+        raise ValueError, "Window is on of 'flat', 'hanning', 'hamming', 'bartlett', 'blackman'"
+
+
+    s=np.r_[x[window_len-1:0:-1],x,x[-1:-window_len:-1]]
+    #print(len(s))
+    if window == 'flat': #moving average
+        w=np.ones(window_len,'d')
+    else:
+        w=eval('np.'+window+'(window_len)')
+
+    y=np.convolve(w/w.sum(),s,mode='valid')
+    return y
 
 #--------------------------------------------------------------------
 def extract_all_iterations(filename):
@@ -121,19 +173,23 @@ def plot_TestAccuracy():
     fname =  os.path.splitext(os.path.split(filename)[1])[0]
     testAccuracy = extract_TestAccuracy(filename, 0)
     #print testAccuracy
-    plt.scatter(*zip(*testAccuracy),color=next(colors))
+    #plt.scatter(*zip(*testAccuracy),color='blue')
+    plt.plot(*zip(*testAccuracy),color='blue')
     #legendnames.append(fname + "_TestAccuracy")  
     legendnames.append("Test Accuracy") 
      
     lsAccuracy = extract_TestAccuracy(filename, 1)
-    plt.scatter(*zip(*lsAccuracy),color=next(colors))
+    plt.plot(*zip(*lsAccuracy),color='red')
     #legendnames.append(fname + "_LsTrainAccuracy")
-    legendnames.append("LS Accuracy") 
+    legendnames.append("Train Accuracy") 
   
-  plt.title('Accuracy')
-  plt.xlabel('Iteration')
-  plt.ylabel('Accuracy')
+  plt.title('Accuracy', fontsize=14)
+  plt.xlabel('Iteration', fontsize=14)
+  plt.ylabel('Accuracy', fontsize=14)
   plt.legend(legendnames,loc='lower right')
+  plt.xlabel('Iteration',fontsize=14)
+  plt.xlim(0,30500)
+  plt.ylim(0,1)
   #print filename + ": Final TestAccuracy is: " + testAccuracy[len(testAccuracy)-1][1]
 
 #----------------------------------------------------------------------
@@ -226,7 +282,10 @@ def extract_ls_r2(filename):
   f=open(filename,'r')
   openFile = f.read()
   r2 = re.findall(r" Rsquare = (\d*.\d*)", openFile)
-  return r2
+  out = []
+  for i in range(len(r2)):
+    out.append(float(r2[i]))
+  return out
 #--------------------------------------------------------------------
 def extract_alpha(filename):
   f=open(filename,'r')
@@ -246,83 +305,115 @@ def extract_newmoment(filename):
   moment = re.findall(r" new_moment = (\d*.\d*)", openFile)
   return moment
 #--------------------------------------------------------------------
-def plot_a_b_c():
-  #plot a b c   
-  global figure
-  figure = figure +1
-  colors = iter(cm.rainbow(np.linspace(0, 1, 10)))
-  plt.figure(figure)
+def plot_R2():
+  global figure 
   filename = args[0]
   ls_iteration = extract_ls_iteration(filename)
   #print ls_iteration
   #print len(ls_iteration)
+  r2 = extract_ls_r2(filename)
+  #print len(r2)
+  #r2_arr = np.asarray(r2)
+  #print r2_arr
+  #r2_smooth=smooth(r2_arr, 9)
+  #print len(r2_smooth)
+  #ind1=(len(r2_smooth)-len(r2) )/2
+  #r2_out = r2_smooth[ind1: ind1+len(r2)]   
+  #print len(r2_out) 
+  figure = figure +1
+  plt.figure(figure)
+  plt.plot(ls_iteration,r2, color='black')
+  plt.title('R^2')
+  plt.xlabel('Iteration',fontsize=14)
+  plt.ylabel('R^2',fontsize=14)
+  plt.xlim(0,30500)
+  #plt.legend(['R^2'],loc='upper right', fontsize=14)
+  
+#--------------------------------------------------------------------
+
+def plot_a_b_c():
+  global figure 
+  figure = figure +1
+  #plt.figure(figure)
+  
+  filename = args[0]
+  ls_iteration = extract_ls_iteration(filename)
+  #print ls_iteration
+  #print len(ls_iteration)
+  
   a = extract_ls_a(filename)
+  b = extract_ls_b(filename)
+  c = extract_ls_c(filename)
+
   #print a
   #print len(a)
-  plt.scatter(ls_iteration,a,color= next(colors))
-  plt.title('a')
-  plt.xlabel('Iteration')
-  plt.ylabel('a')
-  plt.legend(['a'],loc='upper right')
-  #----------------
-  figure = figure +1
-  b = extract_ls_b(filename)
-  #print b
-  plt.figure(figure)
-  plt.scatter(ls_iteration, b,color=next(colors))
-  plt.title('b')
-  plt.xlabel('Iteration')
-  plt.ylabel('b')
-  plt.legend(['b'],loc='upper right')
-  #----------------
-  figure = figure + 1
-  c = extract_ls_c(filename)
-  #print c
-  plt.figure(figure)
-  plt.scatter(ls_iteration,c,color=next(colors))
-  plt.title('c')
-  plt.xlabel('Iteration')
-  plt.ylabel('c')
-  plt.legend(['c'],loc='upper right')
-  #----------------
-  figure = figure +1
-  r2 = extract_ls_r2(filename)
-  #print r2
-  plt.figure(figure)
-  plt.scatter(ls_iteration,r2,color=next(colors))
-  plt.title('R^2')
-  plt.xlabel('Iteration')
-  plt.ylabel('R^2')
-  plt.legend(['R^2'],loc='upper right')
-  # ----------------------
-  figure = figure +1
-  alpha = extract_alpha(filename)
-  #print r2
-  plt.figure(figure)
-  plt.scatter(ls_iteration,alpha,color=next(colors))
-  plt.title('alpha')
-  plt.xlabel('Iteration')
-  plt.ylabel('alpha')
-  plt.legend(['alpha'],loc='upper right')
+  
+  f, (ax1,ax2, ax3) = plt.subplots(3, sharex = True, figsize=(8, 18))
+  ax1.plot(ls_iteration,a,color='black')
+  ax1.set_title('a', fontsize=14)
+  ax1.set_ylim(-0.2,1)
+  ax1.spines['bottom'].set_position(('data', 0))
+  
+  ax2.plot(ls_iteration, b,color='red')
+  ax2.set_ylim(-1,0.2)
+  ax2.set_title('b', fontsize=14)
+  ax2.spines['bottom'].set_position(('data', 0))
+  
+  ax3.plot(ls_iteration,c,color='blue')
+  ax3.set_title('c', fontsize=14)
+  ax3.set_ylim(-0.2,1)
+  ax3.spines['bottom'].set_position(('data', 0))
+  
+  plt.xlabel('Iteration',fontsize=14)
+  plt.xlim(0,30500)
 
+#---------------------------------------------------------------------   
+def plot_alpha():
+  global figure 
+
+  filename = args[0]
+  ls_iteration = extract_ls_iteration(filename)
+  alpha = extract_alpha(filename)
+    
   figure = figure +1
+
+  plt.figure(figure)
+  plt.plot(ls_iteration,alpha,color='black')
+  plt.title('alpha', fontsize=14)
+  plt.xlabel('Iteration', fontsize=14)
+  plt.xlim(0,30500)
+  plt.gca().set_ylim(bottom=0)
+  
+#---------------------------------------------------------------------
+def plot_ls_lr():
+  global figure 
+  figure = figure +1
+  
+  filename = args[0]
+  ls_iteration = extract_ls_iteration(filename)
   newlr = extract_newlr(filename)
+
   plt.figure(figure)
-  plt.scatter(ls_iteration,newlr)
-  plt.title('LS_baselr')
-  plt.xlabel('Iteration')
-  plt.ylabel('baselr')
-  plt.legend(['baselr'],loc='upper right')
+  plt.step(ls_iteration,newlr,color='black')
+  plt.title('Automatic learning rate control', fontsize=14)
+  plt.xlabel('Iteration', fontsize=14) 
+  plt.xlim(0,30500)
+  plt.ylim(0,0.01)
+#---------------------------------------------------------------------
+def plot_ls_moment():
+  global figure 
+    
+  filename = args[0]
+  ls_iteration = extract_ls_iteration(filename)
+  moment = extract_newmoment(filename)
   
   figure = figure +1
-  new_moment = extract_newmoment(filename)
   plt.figure(figure)
-  plt.scatter(ls_iteration,new_moment)
-  plt.title('Automatic Moment Control')
-  plt.xlabel('Iteration')
-  plt.ylabel('moment')
-  plt.legend(['moment'],loc='upper right')
-  
+  plt.scatter(ls_iteration,moment, color='black')
+  plt.title('Automatic moment Control', fontsize=14)
+  plt.xlabel('Iteration', fontsize=14) 
+  plt.xlim(0,30500)
+   
 #---------------------------------------------------------------------
 def plot_lr():   
   global figure
@@ -395,9 +486,11 @@ def main():
 
   #------------------------------------------------
   plot_TestAccuracy()
-  plot_TestLoss()
+  #plot_TestLoss()
+  plot_R2()
   plot_a_b_c()
-  plot_lr()
+  plot_alpha()
+  plot_ls_lr()
   plt.show()
    
   #build legend names from file names 
@@ -410,20 +503,20 @@ def main():
 
     #-------------------------------------------------
   #plot accuracy  
-  colors = iter(cm.rainbow(np.linspace(0, 1, 2*len(args))))
-  plt.figure(1)
-  for filename in args:
-    testAccuracy = extract_TestAccuracy(filename, 0)
+  #colors = iter(cm.rainbow(np.linspace(0, 1, 2*len(args))))
+  #plt.figure(1)plot show axes
+  #for filename in args:
+  #  testAccuracy = extract_TestAccuracy(filename, 0)
     #print testAccuracy
-    plt.scatter(*zip(*testAccuracy),color=next(colors))
+  #  plt.scatter(*zip(*testAccuracy),color=next(colors))
     #print filename + ": Final TestAccuracy is: " + testAccuracy[len(testAccuracy)-1][1]
-    lsAccuracy = extract_TestAccuracy(filename, 1)
+  #  lsAccuracy = extract_TestAccuracy(filename, 1)
     #print lsAccuracy
-    plt.scatter(*zip(*testAccuracy),color=next(colors))
-  plt.title('Accuracy')
-  plt.xlabel('Iteration')
-  plt.ylabel('Accuracy')
-  plt.legend(legendnames,loc='lower right')
+  #  plt.scatter(*zip(*testAccuracy),color=next(colors))
+  #plt.title('Accuracy')
+  #plt.xlabel('Iteration')
+  #plt.ylabel('Accuracy')
+  #plt.legend(legendnames,loc='lower right')
  
   #plot loss   
   #colors = iter(cm.rainbow(np.linspace(0, 1, len(args))))

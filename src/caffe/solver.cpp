@@ -160,6 +160,26 @@ void Solver<Dtype>::TestLineInterval(
     }
 	// ----- compute loss --------------------------------------------
 	Dtype loss = LS_Loss( param_.ls_param().ls_net_id());
+	
+	// -----compute weights^2----------------------------------------------------------
+	Dtype netNorm2 = 0.;
+	Dtype layerNorm2 =0.;
+	for (int i = 0; i < net_params.size(); ++i) {
+    int n = net_params[i]->count();
+    switch (Caffe::mode()) {
+      case Caffe::CPU:
+        layerNorm2 = caffe::caffe_cpu_dot(n, net_params[i]->mutable_cpu_data(),
+      		  net_params[i]->mutable_cpu_data());
+        break;
+      case Caffe::GPU:
+         caffe::caffe_gpu_dot(n, net_params[i]->mutable_gpu_data(),
+      		   net_params[i]->mutable_gpu_data(), &layerNorm2);
+        break;
+      }
+      netNorm2+=layerNorm2;
+  }
+  loss += 0.5 * param_.weight_decay() * netNorm2;
+	//----------------------------------------------------------------
 	LOG(INFO) << "Linear combination: iteration " << iter_
 			  << " alpha = " << std::fixed << std::setprecision(2)<< alpha
 			  << " loss = " << std::fixed << std::setprecision(8) << loss;
@@ -192,8 +212,8 @@ void Solver<Dtype>::LineSearch() {
       // 	alphaOpt = param_.ls_param().alpha_min();
   }
 
-  //  combine optimal weight in ls_history ------
-  if ( param_.ls_param().merge()) {
+  //--- merge --------------------------------------------
+  if ( param_.ls_param().merge() && (alphaOpt >1. )) {
     for (int i = 0; i < net_params.size(); ++i) {
       int n = net_params[i]->count();
       switch (Caffe::mode()) {
@@ -210,12 +230,11 @@ void Solver<Dtype>::LineSearch() {
     LoadWeights(ls_history_);
   }
   else {
-	//restore solver weights before LS
-	LoadWeights(ls_temp_);
-	// and keep them in ls_history
-	SaveWeights(ls_history_);
+	  // restore current solver weights from ls_temp
+    LoadWeights(ls_temp_);
+	  // update ls_history
+	  SaveWeights(ls_history_);
   }
-
 
   //-----------------------------------------------------
   Dtype ls_loss_after = LS_Loss( param_.ls_param().ls_net_id() );
@@ -227,18 +246,23 @@ void Solver<Dtype>::LineSearch() {
   float new_lr  =  old_lr;
   float new_moment = old_moment;
   if ( param_.ls_param().alrc()) {
+    
+    float alrc_factor = sqrt(2.); //sqrt((sqrt(2.)));   
+    
     if ( (Rsquare > LS_RSQUARE_THRESHOLD) && (a > LS_A_THRESHOLD) ){
-      if ( (alphaOpt < 0.6) ) { // this also cover negative alpha
-	    new_lr = old_lr * 0.66;
-	  }  else if (alphaOpt > 3.0) {
-	    new_lr = old_lr * 1.5;
-	  }
-	  // new_lr = old_lr * alphaOpt;
-	  //param_.set_base_lr( new_lr);
+    	// new_lr = old_lr * alphaOpt;
+      if (alphaOpt < 0.77) {
+        new_lr = old_lr / alrc_factor;         
+      } else if ((alphaOpt > 3.41) ) {   //&& (alphaOpt < 5.0)) {
+	      new_lr = old_lr * alrc_factor ;
+	    }
+	      // else if (alphaOpt > 5.0) {
+	      // new_lr = old_lr * alrc_factor; 
+	      // } 
     } else if (Rsquare < LS_RSQUARE_THRESHOLD) {
-	    new_lr = old_lr * 0.66;
+	    //new_lr = old_lr / alrc_factor;
     } else if (a < LS_A_THRESHOLD) {
-	    //  new_lr = old_lr * 1.5.;
+	    //  new_lr = old_lr * alrc_factor;
     }
     new_lr = std::max((float)LS_LR_MIN, new_lr);
     new_lr = std::min((float)LS_LR_MAX, new_lr);
@@ -335,7 +359,7 @@ Dtype Solver<Dtype>::DiffWeights(
     // --- combine weights ----------------------
   for (int i = 0; i < weights0.size(); ++i) {
 	int n0 = weights0[i]->count();
-	int n1 = weights1[i]->count();
+	//int n1 = weights1[i]->count();
 	CHECK(weights0[i]->count() == weights1[i]->count()) << "Layer mismatch";
     for ( int k = 0; k < n0; k++) {
    	  diff += (weights0[i]->cpu_data()[k] - weights1[i]->cpu_data()[k])*
