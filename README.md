@@ -27,6 +27,15 @@ are processed in batch mode.
 
 \* When measured with the [SuperVision](http://www.image-net.org/challenges/LSVRC/2012/supervision.pdf) model that won the ImageNet Large Scale Visual Recognition Challenge 2012.
 
+## Intel Installation
+
+Change in `Makefile.config`:
+* Set CPU-only
+* Switch blas to mkl
+* Enable openmp
+
+Compile with  `make all –j`.  Use Intel compiler for improved performance over GCC.  It is recommended to disable SMT in BIOS.
+
 ## License
 
 Caffe is BSD 2-Clause licensed (refer to the
