@@ -43,9 +43,12 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   void forward_cpu_bias(Dtype* output, const Dtype* bias);
   void backward_cpu_gemm(const Dtype* input, const Dtype* weights,
       Dtype* output);
-  void weight_cpu_gemm(const Dtype* input, const Dtype* output, Dtype*
-      weights);
+  void weight_cpu_gemm(const Dtype* input, const Dtype* output);
   void backward_cpu_bias(Dtype* bias, const Dtype* input);
+
+  void clear_weight_mt(void);
+  void sum_weight_mt(Dtype* weight_diff);
+
 
 #ifndef CPU_ONLY
   void forward_gpu_gemm(const Dtype* col_input, const Dtype* weights,
@@ -167,6 +170,10 @@ class BaseConvolutionLayer : public Layer<Dtype> {
 
   Blob<Dtype> col_buffer_;
   Blob<Dtype> bias_multiplier_;
+
+  int num_of_threads_;                 // openmp
+  std::vector<Dtype> col_buffer_mt_;   //  openmp
+  std::vector<Dtype> weight_diff_mt_;  // openmp
 };
 
 /**
@@ -232,6 +239,7 @@ class ConvolutionLayer : public BaseConvolutionLayer<Dtype> {
       const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
   virtual inline bool reverse_dimensions() { return false; }
   virtual void compute_output_shape();
+
 };
 
 /**
