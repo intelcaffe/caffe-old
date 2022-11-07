@@ -7,6 +7,15 @@ This project has been identified as having known security escapes.
 Intel has ceased development and contributions including, but not limited to, maintenance, bug fixes, new releases, or updates, to this project.  
 
 Intel no longer accepts patches to this project.
+DISCONTINUATION OF PROJECT. 
+
+This project will no longer be maintained by Intel.
+
+This project has been identified as having known security escapes.
+
+Intel has ceased development and contributions including, but not limited to, maintenance, bug fixes, new releases, or updates, to this project.  
+
+Intel no longer accepts patches to this project.
 [Caffe: Convolutional Architecture for Fast Feature Extraction](http://caffe.berkeleyvision.org)
 
 Created by [Yangqing Jia](http://daggerfs.com), UC Berkeley EECS department.
